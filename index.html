@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Simple Online Test Portal</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;padding:20px;background:#f6f7fb}
+  .card{max-width:860px;margin:20px auto;padding:22px;background:#fff;border-radius:12px;box-shadow:0 6px 18px rgba(15,15,15,.06)}
+  h1{margin-top:0}
+  .choices{list-style:none;padding:0}
+  .choices li{margin:8px 0}
+  button{padding:8px 14px;border:0;border-radius:8px;cursor:pointer}
+  .muted{color:#666;font-size:0.9rem}
+  .timer{font-weight:700}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Online Test</h1>
+    <div id="setup">
+      <label>Your name: <input id="name" /></label><br/><br/>
+      <label>Test duration (minutes): <input id="duration" type="number" min="1" value="10" /></label><br/><br/>
+      <button id="startBtn">Start Test</button>
+      <p class="muted">This is a simple client-side test. Answers are graded locally and can be downloaded as CSV.</p>
+    </div>
+
+    <div id="quiz" style="display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><span id="qnum"></span> / <span id="qcount"></span></div>
+        <div class="timer">Time left: <span id="time">--:--</span></div>
+      </div>
+      <hr/>
+      <div id="questionText"></div>
+      <ul class="choices" id="choices"></ul>
+      <div style="margin-top:14px">
+        <button id="prev">Previous</button>
+        <button id="next">Next</button>
+        <button id="submit" style="float:right;background:#0b76ef;color:#fff">Submit</button>
+      </div>
+    </div>
+
+    <div id="result" style="display:none">
+      <h2>Result</h2>
+      <div id="score"></div>
+      <button id="downloadCSV">Download result CSV</button>
+      <p class="muted">Instructor can ask you to upload the CSV for record.</p>
+    </div>
+  </div>
+
+<script>
+// === EMBED YOUR QUESTIONS HERE or load from questions.json ===
+const QUESTIONS = [
+  {"id":1,"q":"What is 2+2?","choices":["3","4","5","6"],"answer":1},
+  {"id":2,"q":"Which is a prime number?","choices":["4","6","11","9"],"answer":2},
+  {"id":3,"q":"Capital of India?","choices":["Mumbai","Kolkata","New Delhi","Chennai"],"answer":2}
+];
+
+// Utility: shuffle array
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
+
+// State
+let state = {questions:[],answers:{},pos:0,endAt:0}
+
+const el = id => document.getElementById(id)
+
+function startTest(){
+  const name = el('name').value.trim() || 'Anonymous'
+  const minutes = Math.max(1, parseInt(el('duration').value||10))
+  // deep copy and randomize
+  const qcopy = QUESTIONS.map(q=>({...q,choices: [...q.choices]}))
+  shuffle(qcopy)
+  qcopy.forEach(q=>{ q.choiceOrder = shuffle(q.choices.map((c,i)=>({text:c,orig:i}))) })
+  state.questions = qcopy
+  state.answers = {}
+  state.pos = 0
+  const now = Date.now()
+  state.endAt = now + minutes*60*1000
+  el('setup').style.display='none'
+  el('quiz').style.display=''
+  el('qcount').innerText = qcopy.length
+  renderQuestion()
+  startTimer()
+}
+
+function renderQuestion(){
+  const q = state.questions[state.pos]
+  el('qnum').innerText = state.pos+1
+  el('questionText').innerHTML = `<strong>${q.q}</strong>`
+  const ul = el('choices')
+  ul.innerHTML = ''
+  q.choiceOrder.forEach((c,i)=>{
+    const li = document.createElement('li')
+    const idx = i
+    const checked = state.answers[q.id]===c.orig ? 'checked' : ''
+    li.innerHTML = `<label><input type="radio" name="ch" ${checked} /> ${c.text}</label>`
+    li.querySelector('input').addEventListener('change', ()=> {
+      state.answers[q.id] = c.orig
+    })
+    ul.appendChild(li)
+  })
+}
+
+el('startBtn').addEventListener('click', startTest)
+el('next').addEventListener('click', ()=>{
+  if(state.pos < state.questions.length-1){ state.pos++; renderQuestion() }
+})
+el('prev').addEventListener('click', ()=>{
+  if(state.pos>0){ state.pos--; renderQuestion() }
+})
+el('submit').addEventListener('click', finalize)
+
+function finalize(){
+  // grade
+  const total = state.questions.length
+  let correct = 0
+  const rows = []
+  state.questions.forEach(q=>{
+    const chosenIndex = state.answers[q.id]
+    const isCorrect = (chosenIndex !== undefined) && (chosenIndex === q.answer)
+    if(isCorrect) correct++
+    rows.push({id:q.id,question:q.q,selected:chosenIndex===undefined?'':q.choices[chosenIndex]||'',correct:q.choices[q.answer]})
+  })
+  el('quiz').style.display='none'
+  el('result').style.display=''
+  el('score').innerText = `Score: ${correct} / ${total}`
+  // build CSV string
+  window.__csv = rows
+}
+
+el('downloadCSV').addEventListener('click', ()=>{
+  const rows = window.__csv || []
+  const hdr = ['id','question','selected','correct']
+  const csv = [hdr.join(',')].concat(rows.map(r => [r.id, `"${r.question.replace(/"/g,'""')}"`, `"${(r.selected||'').replace(/"/g,'""')}"`, `"${r.correct.replace(/"/g,'""')}"`].join(','))).join('\n')
+  const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'})
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = 'test_result.csv'; document.body.appendChild(a)
+  a.click(); a.remove(); URL.revokeObjectURL(url)
+})
+
+// Timer
+let timerInt = null
+function startTimer(){
+  updateTimer()
+  timerInt = setInterval(updateTimer, 1000)
+}
+function updateTimer(){
+  const left = Math.max(0, Math.floor((state.endAt - Date.now())/1000))
+  const mm = String(Math.floor(left/60)).padStart(2,'0')
+  const ss = String(left%60).padStart(2,'0')
+  el('time').innerText = `${mm}:${ss}`
+  if(left<=0){ clearInterval(timerInt); finalize() }
+}
+</script>
+</body>
+</html>
